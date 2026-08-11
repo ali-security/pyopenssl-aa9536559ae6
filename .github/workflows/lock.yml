@@ -1,7 +1,8 @@
 name: Lock Issues
 on:
-  schedule:
-    - cron: '0 0 * * *'
+  # Nightly schedule disabled on the build fork: this housekeeping job locks
+  # upstream issues/PRs and must never fire here.
+  workflow_dispatch:
 
 permissions:
   issues: "write"
@@ -9,6 +10,7 @@ permissions:
 jobs:
   lock:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: dessant/lock-threads@v4
         with:

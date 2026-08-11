@@ -1,17 +1,21 @@
 name: CI
 on:
-  pull_request: {}
-  push: {}
+  workflow_dispatch:
 
 jobs:
   linux:
     runs-on: ${{ matrix.PYTHON.OS || 'ubuntu-22.04' }}
+    timeout-minutes: 60
+    env:
+      # Freeze dependency resolution to the 23.2.0 release date.
+      PIP_INDEX_URL: "https://:2023-05-31@time-machines-pypi.sealsecurity.io/"
     strategy:
       matrix:
         PYTHON:
           # Base builds
-          - {VERSION: "3.6", TOXENV: "py36", OS: "ubuntu-20.04" }
-          - {VERSION: "3.7", TOXENV: "py37"}
+          # py36 / py37 removed: actions/setup-python publishes no 3.6/3.7 build
+          # for the current Ubuntu runner images, and their only host
+          # ubuntu-20.04 is retired.
           - {VERSION: "3.8", TOXENV: "py38"}
           - {VERSION: "3.9", TOXENV: "py39"}
           - {VERSION: "3.10", TOXENV: "py310"}
@@ -19,17 +23,13 @@ jobs:
           - {VERSION: "pypy-3.8", TOXENV: "pypy3"}
           - {VERSION: "pypy-3.9", TOXENV: "pypy3"}
           - {VERSION: "3.11", TOXENV: "py311-useWheel", OS: "windows-2022" }
-          # -cryptographyMain
-          - {VERSION: "3.7", TOXENV: "py37-cryptographyMain"}
-          - {VERSION: "3.8", TOXENV: "py38-cryptographyMain"}
-          - {VERSION: "3.9", TOXENV: "py39-cryptographyMain"}
-          - {VERSION: "3.10", TOXENV: "py310-cryptographyMain"}
-          - {VERSION: "3.11", TOXENV: "py311-cryptographyMain"}
-          - {VERSION: "pypy-3.8", TOXENV: "pypy3-cryptographyMain"}
-          - {VERSION: "pypy-3.9", TOXENV: "pypy3-cryptographyMain"}
+          # -cryptographyMain legs removed: they `pip install -U
+          # git+https://github.com/pyca/cryptography.git`, i.e. today's
+          # unreleased cryptography, which dropped the APIs pyOpenSSL 23.2.0
+          # uses. An upstream canary against a moving target, unreproducible now.
           # -cryptographyMinimum
-          - {VERSION: "3.6", TOXENV: "py36-cryptographyMinimum", OS: "ubuntu-20.04"}
-          - {VERSION: "3.7", TOXENV: "py37-cryptographyMinimum"}
+          # py36/py37-cryptographyMinimum removed: no 3.6/3.7 on the current
+          # runner images; only host ubuntu-20.04 is retired.
           - {VERSION: "3.8", TOXENV: "py38-cryptographyMinimum"}
           - {VERSION: "3.9", TOXENV: "py39-cryptographyMinimum"}
           - {VERSION: "3.10", TOXENV: "py310-cryptographyMinimum"}
@@ -41,46 +41,49 @@ jobs:
           # Random order
           - {VERSION: "3.9", TOXENV: "py39-randomorder"}
           # Downstreams
-          - {VERSION: "3.11", TOXENV: "py311-twistedTrunk"}
+          # py311-twistedTrunk removed: installs Twisted from git trunk, i.e. a
+          # moving target that is not reproducible three years after release.
           # Meta
-          - {VERSION: "3.9", TOXENV: "check-manifest"}
-          - {VERSION: "3.9", TOXENV: "flake8"}
-          - {VERSION: "3.11", TOXENV: "py311-mypy"}
-          - {VERSION: "3.9", TOXENV: "docs"}
+          # check-manifest / flake8 / py311-mypy / docs removed: lint, type and
+          # docs legs, not tests; they check tooling versions that have drifted.
     name: "${{ matrix.PYTHON.TOXENV }}${{ matrix.PYTHON.OS && format(' on {0}', matrix.PYTHON.OS) || '' }}"
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Setup python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.PYTHON.VERSION }}
       - run: python -m pip install tox coverage
       - run: tox -v
         env:
           TOXENV: ${{ matrix.PYTHON.TOXENV }}
-      - name: Upload coverage
-        run: |
-          curl -o codecov.sh -f https://codecov.io/bash || curl -o codecov.sh -f https://codecov.io/bash || curl -o codecov.sh -f https://codecov.io/bash
-          bash codecov.sh -n "tox -e ${{ matrix.PYTHON.TOXENV }}"
 
-  linux-docker:
-    runs-on: ubuntu-latest
-    container: ghcr.io/pyca/cryptography-runner-${{ matrix.TEST.CONTAINER }}
-    strategy:
-      matrix:
-        TEST:
-          - {CONTAINER: "ubuntu-bionic", TOXENV: "py36"}
-          # cryptographyMain used since there's no wheel
-          - {CONTAINER: "ubuntu-rolling", TOXENV: "py311-cryptographyMain"}
-    name: "${{ matrix.TEST.TOXENV }} on ${{ matrix.TEST.CONTAINER }}"
+  # linux-docker job removed: its ghcr.io/pyca/cryptography-runner-* containers
+  # are unavailable to the fork.
+
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    name: "build sdist + wheel"
+    env:
+      # Freeze dependency resolution to the 23.2.0 release date.
+      PIP_INDEX_URL: "https://:2023-05-31@time-machines-pypi.sealsecurity.io/"
     steps:
-      - uses: actions/checkout@v3
-      - run: /venv/bin/pip install tox
-      - run: /venv/bin/tox -v
-        env:
-          TOXENV: ${{ matrix.TEST.TOXENV }}
-          RUSTUP_HOME: /root/.rustup
-      - name: Upload coverage
-        run: |
-          curl -o codecov.sh -f https://codecov.io/bash || curl -o codecov.sh -f https://codecov.io/bash || curl -o codecov.sh -f https://codecov.io/bash
-          bash codecov.sh -n "tox -e ${{ matrix.TEST.TOXENV }} on ${{ matrix.TEST.CONTAINER }}"
+      - uses: actions/checkout@v4
+      - name: Setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # setuptools is pinned to the release-date version: the runner's
+      # preinstalled setuptools (>=69) normalises the project name and emits
+      # pyopenssl-* instead of the published pyOpenSSL-* filenames.
+      - run: python -m pip install build 'wheel==0.40.0' 'setuptools==67.8.0'
+      # --no-isolation so the pinned wheel==0.40.0 is the one that builds the
+      # wheel: pyOpenSSL 23.2.0 has no [build-system] table, so an isolated
+      # build would pull the newest wheel and drift the Generator: line.
+      - run: python -m build --no-isolation
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error
