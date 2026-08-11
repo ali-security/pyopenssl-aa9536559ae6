@@ -4539,6 +4539,84 @@ class TestDTLS:
         except NotImplementedError:  # OpenSSL 1.1.0 and earlier
             pass
 
+    def test_cookie_generate_too_long(self):
+        s_ctx = Context(DTLS_METHOD)
+
+        def generate_cookie(ssl):
+            return b"\x00" * 256
+
+        def verify_cookie(ssl, cookie):
+            return True
+
+        s_ctx.set_cookie_generate_callback(generate_cookie)
+        s_ctx.set_cookie_verify_callback(verify_cookie)
+        s_ctx.use_privatekey(load_privatekey(FILETYPE_PEM, server_key_pem))
+        s_ctx.use_certificate(load_certificate(FILETYPE_PEM, server_cert_pem))
+        s_ctx.set_options(OP_NO_QUERY_MTU)
+        s = Connection(s_ctx)
+        s.set_accept_state()
+
+        c_ctx = Context(DTLS_METHOD)
+        c_ctx.set_options(OP_NO_QUERY_MTU)
+        c = Connection(c_ctx)
+        c.set_connect_state()
+
+        c.set_ciphertext_mtu(1500)
+        s.set_ciphertext_mtu(1500)
+
+        # Client sends ClientHello
+        try:
+            c.do_handshake()
+        except SSL.WantReadError:
+            pass
+        chunk = c.bio_read(self.LARGE_BUFFER)
+        s.bio_write(chunk)
+
+        # Server tries DTLSv1_listen, which triggers cookie generation.
+        # The oversized cookie should raise ValueError.
+        with pytest.raises(ValueError, match="Cookie too long"):
+            s.DTLSv1_listen()
+
+    def test_cookie_generate_maximum_length(self):
+        # A cookie of the maximum length DTLS allows (the cookie field of
+        # HelloVerifyRequest has a one byte length prefix) is still accepted:
+        # the server sends its HelloVerifyRequest and then waits for the
+        # client to come back with the cookie.
+        s_ctx = Context(DTLS_METHOD)
+
+        def generate_cookie(ssl):
+            return b"\x00" * 255
+
+        def verify_cookie(ssl, cookie):
+            return True
+
+        s_ctx.set_cookie_generate_callback(generate_cookie)
+        s_ctx.set_cookie_verify_callback(verify_cookie)
+        s_ctx.use_privatekey(load_privatekey(FILETYPE_PEM, server_key_pem))
+        s_ctx.use_certificate(load_certificate(FILETYPE_PEM, server_cert_pem))
+        s_ctx.set_options(OP_NO_QUERY_MTU)
+        s = Connection(s_ctx)
+        s.set_accept_state()
+
+        c_ctx = Context(DTLS_METHOD)
+        c_ctx.set_options(OP_NO_QUERY_MTU)
+        c = Connection(c_ctx)
+        c.set_connect_state()
+
+        c.set_ciphertext_mtu(1500)
+        s.set_ciphertext_mtu(1500)
+
+        # Client sends ClientHello
+        try:
+            c.do_handshake()
+        except SSL.WantReadError:
+            pass
+        chunk = c.bio_read(self.LARGE_BUFFER)
+        s.bio_write(chunk)
+
+        with pytest.raises(WantReadError):
+            s.DTLSv1_listen()
+
     def test_timeout(self, monkeypatch):
         c_ctx = Context(DTLS_METHOD)
         c = Connection(c_ctx)
